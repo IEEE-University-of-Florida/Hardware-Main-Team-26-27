@@ -7,6 +7,7 @@
 
 #include "otos.h"
 #include "otos_localization.hpp"
+#include "otos_odometry.hpp"
 #include "sim_otos.h"
 
 using namespace otos;
@@ -245,6 +246,77 @@ static void testHubLocalization() {
     CHECK(sample.monotonic_time_us == 43);
 }
 
+static void testOdometryFramesAndCovariance() {
+    OtosOdometryConfig config;
+    config.pose_variance = {{0.01, 0.02, 0.03}};
+    config.pose_drift_per_meter = {{0.1, 0.2, 0.3}};
+    config.twist_variance = {{0.04, 0.05, 0.06}};
+    OtosOdometryConverter converter(config);
+    OtosOdometry odometry{};
+    OtosSample sample{};
+    sample.monotonic_time_us = 42;
+    sample.velocity = {2.0f, 0.0f, 0.5f};
+    CHECK(converter.update(sample, odometry));
+    CHECK(odometry.monotonic_time_us == 42);
+    NEAR(odometry.orientation_z, 0.0, 1e-6);
+    NEAR(odometry.orientation_w, 1.0, 1e-6);
+    NEAR(odometry.body_velocity_x, 2.0, 1e-6);
+    NEAR(odometry.pose_covariance[0], 0.01, 1e-6);
+
+    sample.monotonic_time_us = 43;
+    sample.position = {3.0f, 4.0f, 1.5707963f};
+    sample.velocity = {0.0f, 2.0f, 0.5f};
+    CHECK(converter.update(sample, odometry));
+    NEAR(odometry.odom_pose.x, 3.0, 1e-6);
+    NEAR(odometry.body_velocity_x, 2.0, 1e-6);
+    NEAR(odometry.body_velocity_y, 0.0, 1e-6);
+    NEAR(odometry.yaw_rate, 0.5, 1e-6);
+    NEAR(odometry.orientation_z, 0.7071068, 1e-6);
+    NEAR(odometry.orientation_w, 0.7071068, 1e-6);
+    NEAR(odometry.pose_covariance[0], 0.26, 1e-6);
+    NEAR(odometry.pose_covariance[7], 1.02, 1e-6);
+    NEAR(odometry.pose_covariance[35], 2.28, 1e-6);
+    CHECK(odometry.pose_covariance[14] > 1.0);
+    CHECK(odometry.pose_covariance[21] > 1.0);
+    CHECK(odometry.pose_covariance[28] > 1.0);
+    NEAR(odometry.pose_covariance[1], 0.0, 1e-6);
+    NEAR(odometry.twist_covariance[0], 0.04, 1e-6);
+    NEAR(odometry.twist_covariance[7], 0.05, 1e-6);
+    NEAR(odometry.twist_covariance[35], 0.06, 1e-6);
+}
+
+static void testOdometryGapsAndReset() {
+    OtosOdometryConverter converter;
+    OtosSample sample{};
+    OtosOdometry odometry{};
+    CHECK(converter.update(sample, odometry));
+    sample.position.x = 2.0f;
+    sample.monotonic_time_us = 1;
+    CHECK(converter.update(sample, odometry));
+    const double before_gap = odometry.pose_covariance[0];
+    CHECK(before_gap > 1e-3);
+
+    sample.position.x = 4.0f;
+    sample.monotonic_time_us = 2;
+    sample.status.raw = 0x02;
+    CHECK(!converter.update(sample, odometry));
+    CHECK(odometry.monotonic_time_us == 1);
+    sample.status.raw = 0;
+    sample.position.x = 6.0f;
+    CHECK(converter.update(sample, odometry));
+    CHECK(odometry.pose_covariance[0] == before_gap);
+
+    converter.markGap();
+    sample.position.x = 7.0f;
+    CHECK(converter.update(sample, odometry));
+    CHECK(odometry.pose_covariance[0] == before_gap);
+
+    converter.reset();
+    sample.position.x = 0.0f;
+    CHECK(converter.update(sample, odometry));
+    NEAR(odometry.pose_covariance[0], 1e-3, 1e-7);
+}
+
 int main() {
     testConnect();
     testSelfTest();
@@ -257,6 +329,8 @@ int main() {
     testBusFailures();
     testCalibrationHelpers();
     testHubLocalization();
+    testOdometryFramesAndCovariance();
+    testOdometryGapsAndReset();
     printf("%d checks passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

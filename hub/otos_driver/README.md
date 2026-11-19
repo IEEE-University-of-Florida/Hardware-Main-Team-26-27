@@ -12,7 +12,13 @@ cmake --build build --config Debug
 ctest --test-dir build -C Debug --output-on-failure
 ```
 
-The simulator checks decoding, calibration, error handling, and the hub wrapper. Physical I²C transactions, sensor orientation, and tracking on the field need a board and sensor.
+The simulator checks decoding, calibration, error handling, the hub wrapper, and odometry conversion. Its odometry tests cover the 90° velocity rotation, covariance growth, rejected samples, and reset behavior. Physical I²C transactions, sensor orientation, and tracking on the field need a board and sensor.
+
+## Odometry reference
+
+The body-frame velocity conversion and distance-based covariance model follow [Moritz Boeker's ROS 2 OTOS driver](https://github.com/moritzboeker/ros2_sparkfun_otos_driver). The [upstream MIT notice](LICENSE.ros2_sparkfun_otos_driver) is included here.
+
+The converter adds the squared product of the configured drift coefficient and observed distance to the initial pose variance. Tune the bench defaults with repeated runs on the actual track. After an invalid sample or read failure it starts a new distance segment at the next valid pose, preserving accumulated variance. Call `reset()` when deliberately re-zeroing the sensor.
 
 ## Bench bring-up
 

@@ -1,6 +1,7 @@
 #include "board_config.hpp"
 #include "otos_esp_idf_bus.hpp"
 #include "otos_localization.hpp"
+#include "otos_odometry.hpp"
 
 #include "esp_err.h"
 #include "esp_log.h"
@@ -39,25 +40,29 @@ extern "C" void app_main() {
 
     OtosEspIdfBus bus(master, device);
     OtosLocalization localization;
+    OtosOdometryConverter odometry;
     ESP_LOGI(kLogTag, "Keep the robot still during OTOS calibration");
-    const auto initialized = localization.begin(bus, OtosCalibration{});
-    if (initialized != otos::Err::Ok) {
-        ESP_LOGE(kLogTag, "Startup failed: %s", otos::errName(initialized));
-        ESP_ERROR_CHECK(i2c_master_bus_rm_device(device));
-        ESP_ERROR_CHECK(i2c_del_master_bus(master));
-        return;
+    // Bench bring-up only. Once running, a read failure never restarts calibration.
+    auto initialized = localization.begin(bus, OtosCalibration{});
+    while (initialized != otos::Err::Ok) {
+        ESP_LOGW(kLogTag, "Startup failed: %s; retrying in 2 seconds", otos::errName(initialized));
+        vTaskDelay(pdMS_TO_TICKS(2000));
+        initialized = localization.begin(bus, OtosCalibration{});
     }
 
     while (true) {
         OtosSample sample{};
+        OtosOdometry reading{};
         const auto result = localization.read(static_cast<uint64_t>(esp_timer_get_time()), sample);
         if (result != otos::Err::Ok) {
+            odometry.markGap();
             ESP_LOGW(kLogTag, "Read failed: %s", otos::errName(result));
-        } else if (!sample.valid()) {
+        } else if (!odometry.update(sample, reading)) {
             ESP_LOGW(kLogTag, "Tracking status: 0x%02x", static_cast<unsigned int>(sample.status.raw));
         } else {
-            ESP_LOGI(kLogTag, "x=%.3f m y=%.3f m yaw=%.3f rad",
-                     sample.position.x, sample.position.y, sample.position.h);
+            ESP_LOGI(kLogTag, "x=%.3f m y=%.3f m yaw=%.3f rad body_vx=%.3f m/s body_vy=%.3f m/s",
+                     reading.odom_pose.x, reading.odom_pose.y, reading.odom_pose.h,
+                     reading.body_velocity_x, reading.body_velocity_y);
         }
         vTaskDelay(pdMS_TO_TICKS(100));
     }
