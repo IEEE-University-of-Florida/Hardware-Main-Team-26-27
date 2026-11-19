@@ -1,0 +1,13 @@
+menu "Hub hardware"
+
+config HUB_OTOS_SDA_GPIO
+    int "OTOS I2C SDA GPIO"
+    range -1 48
+    default -1
+
+config HUB_OTOS_SCL_GPIO
+    int "OTOS I2C SCL GPIO"
+    range -1 48
+    default -1
+
+endmenu
